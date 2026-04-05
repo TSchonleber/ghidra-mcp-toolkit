@@ -49,6 +49,35 @@ if [ -z "$GHIDRA_DIR" ]; then
       mkdir -p ~/Applications
       echo "Downloading $(basename $GHIDRA_URL)..."
       curl -L -o "/tmp/ghidra-latest.zip" "$GHIDRA_URL"
+      
+      # SHA-256 verification — fetch checksum from release assets
+      SHA_URL=$(curl -s https://api.github.com/repos/NationalSecurityAgency/ghidra/releases/latest | grep "browser_download_url.*sha256" | head -1 | cut -d'"' -f4)
+      if [ -n "$SHA_URL" ]; then
+        echo "Verifying SHA-256 checksum..."
+        curl -sL -o "/tmp/ghidra-sha256.txt" "$SHA_URL"
+        EXPECTED=$(grep "$(basename $GHIDRA_URL)" /tmp/ghidra-sha256.txt | awk '{print $1}')
+        if [ -n "$EXPECTED" ]; then
+          if command -v shasum &>/dev/null; then
+            ACTUAL=$(shasum -a 256 /tmp/ghidra-latest.zip | awk '{print $1}')
+          else
+            ACTUAL=$(sha256sum /tmp/ghidra-latest.zip | awk '{print $1}')
+          fi
+          if [ "$EXPECTED" = "$ACTUAL" ]; then
+            echo "✓ SHA-256 verified: $ACTUAL"
+          else
+            echo "ERROR: SHA-256 mismatch! Expected $EXPECTED, got $ACTUAL"
+            echo "The download may be corrupted or tampered with. Aborting."
+            rm -f /tmp/ghidra-latest.zip /tmp/ghidra-sha256.txt
+            exit 1
+          fi
+        else
+          echo "WARNING: Could not find checksum for $(basename $GHIDRA_URL) — skipping verification"
+        fi
+        rm -f /tmp/ghidra-sha256.txt
+      else
+        echo "WARNING: No SHA-256 checksums found in release — skipping verification"
+      fi
+      
       echo "Extracting to ~/Applications..."
       unzip -q "/tmp/ghidra-latest.zip" -d ~/Applications/
       rm /tmp/ghidra-latest.zip
