@@ -127,295 +127,141 @@ verification:
 
 # Ghidra MCP Toolkit
 
-Give any AI coding agent the ability to reverse engineer binaries. The agent can decompile functions, trace cross-references, extract strings, analyze control flow, and navigate complex binaries — all through Ghidra's MCP bridge.
+## Goal
 
-Ghidra is the NSA's open-source reverse engineering framework. This kit wires it into your agent via MCP so you can have conversations like:
+Give any AI coding agent reverse engineering capabilities — decompile binaries to C pseudocode, trace cross-references, extract strings, analyze control flow, and navigate complex compiled code — all through Ghidra's MCP bridge.
 
-```
-"Decompile main() and tell me what this binary does"
-"Find all functions that reference the string 'password'"
-"Trace the call chain from recv() to see how network input is processed"
-"Look for buffer overflow vulnerabilities in the input parsing functions"
-```
+## When to Use
 
-## Architecture
+- Analyzing compiled binaries to understand their behavior
+- Firmware analysis for IoT and embedded devices
+- Security research on compiled applications
+- CTF (Capture The Flag) reverse engineering challenges
+- Comparing binary versions to identify code changes (patch diffing)
+- Understanding proprietary protocols from client binaries
 
-```
-Your Agent (Claude Code / Cursor / Codex / OpenClaw / etc.)
-    ↓ MCP stdio
-┌──────────────────────────────────────────────────────┐
-│  ghidra-mcp       Ghidra REST API bridge (port 8080) │
-│  ├─ decompile     Decompile function → C pseudocode  │
-│  ├─ disassemble   Get assembly listing               │
-│  ├─ functions     List/search all functions           │
-│  ├─ xrefs_to      Cross-references TO an address     │
-│  ├─ xrefs_from    Cross-references FROM an address    │
-│  ├─ strings       Extract all strings in binary       │
-│  ├─ search_bytes  Search for byte patterns            │
-│  ├─ data_types    List defined data types/structs     │
-│  ├─ segments      List memory segments/sections       │
-│  ├─ imports       List imported functions              │
-│  ├─ exports       List exported symbols               │
-│  ├─ rename        Rename functions/variables           │
-│  ├─ comment       Add comments to addresses            │
-│  ├─ analyze       Trigger auto-analysis               │
-│  └─ memory_read   Read raw bytes at address           │
-└──────────────────────────────────────────────────────┘
-    ↕ HTTP REST (localhost:8080)
-┌──────────────────────────────────────────────────────┐
-│  Ghidra (CodeBrowser)                                │
-│  GhidraMCPPlugin enabled                             │
-│  Binary loaded and analyzed                          │
-└──────────────────────────────────────────────────────┘
-```
+## Setup
 
-**Important:** GhidraMCP serves plain HTTP REST on port 8080. It is NOT an SSE server. Do not use mcp-proxy or SSE transport — use the FastMCP stdio bridge (`bridge_mcp_ghidra.py`).
+### Models
 
-## Full Setup
+Any model that supports MCP tool calls. Verified with claude-sonnet-4-6. Model-agnostic.
 
-### One-Shot Install
+### Services
+
+| Service | Purpose | Install |
+|---------|---------|---------|
+| Java 17+ | Required runtime for Ghidra | `brew install --cask temurin` (macOS) or `apt install openjdk-17-jdk` (Linux) |
+| Ghidra | NSA reverse engineering framework | Download from github.com/NationalSecurityAgency/ghidra/releases |
+
+### Environment
+
+Works on macOS, Linux, and Windows. The setup script handles Java detection, Ghidra download, MCP bridge installation, and macOS .app wrapper creation.
+
+### Quick Install
 
 ```bash
 bash scripts/setup-ghidra.sh
+bash scripts/healthcheck.sh
 ```
 
-This installs Java (if needed), downloads Ghidra, clones the MCP bridge, creates the Python venv, and creates a macOS .app wrapper.
+### Agent Configuration
 
-### Manual Setup
+Add the Ghidra MCP server to your agent config. Example for Claude Code (`~/.claude/mcp.json`):
 
-#### Step 1 — Install Java 17+
-
-Ghidra requires Java 17 or later.
-
-**macOS:**
-```bash
-brew install --cask temurin
-
-# Verify
-java -version
-# openjdk version "17.x.x" or higher
-```
-
-**Linux (Ubuntu/Debian):**
-```bash
-sudo apt update && sudo apt install -y openjdk-17-jdk
-
-# Verify
-java -version
-```
-
-**Linux (Fedora/RHEL):**
-```bash
-sudo dnf install -y java-17-openjdk-devel
-```
-
-**Windows:**
-Download Temurin JDK 17 from https://adoptium.net/temurin/releases/
-
-#### Step 2 — Install Ghidra
-
-**All platforms:**
-```bash
-# Download latest release
-# https://github.com/NationalSecurityAgency/ghidra/releases
-
-# macOS/Linux — extract to home directory
-cd ~/Applications  # or ~/ghidra
-unzip ghidra_*_PUBLIC_*.zip
-
-# Verify it starts
-~/Applications/ghidra_*/ghidraRun
-```
-
-**macOS — optional .app wrapper for Spotlight/Dock:**
-```bash
-mkdir -p /Applications/Ghidra.app/Contents/MacOS
-cat > /Applications/Ghidra.app/Contents/MacOS/Ghidra << 'WRAPPER'
-#!/bin/bash
-exec "$HOME/Applications/ghidra_"*/ghidraRun "$@"
-WRAPPER
-chmod +x /Applications/Ghidra.app/Contents/MacOS/Ghidra
-
-cat > /Applications/Ghidra.app/Contents/Info.plist << 'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>CFBundleExecutable</key><string>Ghidra</string>
-<key>CFBundleIdentifier</key><string>org.ghidra.re</string>
-<key>CFBundleName</key><string>Ghidra</string>
-<key>CFBundlePackageType</key><string>APPL</string>
-</dict></plist>
-PLIST
-```
-
-#### Step 3 — Install GhidraMCP Plugin
-
-```bash
-# Download GhidraMCP from GitHub
-# https://github.com/LaurieWired/GhidraMCP/releases
-
-# Clone for the bridge script
-git clone https://github.com/LaurieWired/GhidraMCP.git ~/ghidra-mcp
-
-# In Ghidra (GUI — 5 clicks):
-# 1. File → Install Extensions
-# 2. Click green + button
-# 3. Select the GhidraMCP-*.zip from the release
-# 4. Restart Ghidra when prompted
-# 5. Open a project in CodeBrowser, then:
-#    File → Configure → Developer → check GhidraMCPPlugin → Apply
-```
-
-#### Step 4 — MCP Bridge Setup
-
-```bash
-cd ~/ghidra-mcp
-
-# macOS (uv — recommended):
-uv venv ~/ghidra-mcp/.venv --python 3.11
-uv pip install --python ~/ghidra-mcp/.venv requests mcp
-
-# Linux / standard pip:
-python3 -m venv ~/ghidra-mcp/.venv
-~/ghidra-mcp/.venv/bin/pip install requests mcp
-
-# Verify bridge can start (will fail to connect if Ghidra isn't open — that's OK)
-~/ghidra-mcp/.venv/bin/python3 ~/ghidra-mcp/bridge_mcp_ghidra.py --help 2>/dev/null || echo "Bridge installed"
-```
-
-#### Step 5 — Agent Configuration
-
-**Claude Code** — add to `~/.claude/mcp.json`:
 ```json
 {
   "mcpServers": {
     "ghidra": {
-      "command": "HOMEDIR/ghidra-mcp/.venv/bin/python3",
-      "args": ["HOMEDIR/ghidra-mcp/bridge_mcp_ghidra.py"]
+      "command": "~/ghidra-mcp/.venv/bin/python3",
+      "args": ["~/ghidra-mcp/bridge_mcp_ghidra.py"]
     }
   }
 }
 ```
 
-**OpenClaw / Hermes** — add to config:
-```yaml
-mcp_servers:
-  ghidra:
-    command: "~/ghidra-mcp/.venv/bin/python3"
-    args: ["~/ghidra-mcp/bridge_mcp_ghidra.py"]
-    timeout: 180
-    connect_timeout: 30
-```
+**Important:** GhidraMCP serves plain HTTP REST on port 8080. It is NOT an SSE server. Use the FastMCP stdio bridge, not mcp-proxy.
 
-**Cursor** — add to `.cursor/mcp.json`:
-```json
-{
-  "mcpServers": {
-    "ghidra": {
-      "command": "HOMEDIR/ghidra-mcp/.venv/bin/python3",
-      "args": ["HOMEDIR/ghidra-mcp/bridge_mcp_ghidra.py"]
-    }
-  }
-}
-```
+### One-Time Ghidra Plugin Setup (5 clicks)
 
-Replace `HOMEDIR` with your actual home directory path.
+1. Open Ghidra → File → Install Extensions → click + button
+2. Select the GhidraMCP .zip from the release
+3. Restart Ghidra when prompted
+4. Open a project in CodeBrowser
+5. File → Configure → Developer → check GhidraMCPPlugin → Apply
 
-## Workflows
+## Steps
 
-### Malware Triage
+### 1. Orient
+
+List all functions and extract strings to understand the binary's purpose.
 
 ```
-1. "Import this binary into Ghidra and run auto-analysis"
-2. "List all imported functions — look for network, crypto, and file system APIs"
-3. "Extract all strings and flag anything that looks like URLs, IPs, or C2 domains"
-4. "Decompile the function that calls connect() — trace how the C2 address is built"
-5. "Find all functions that reference CreateRemoteThread or WriteProcessMemory"
-6. "Check for anti-debug techniques — look for IsDebuggerPresent, NtQueryInformationProcess"
-7. "Map the malware's capabilities: persistence, exfiltration, lateral movement"
+"List all functions in this binary. Extract all strings and flag anything interesting — URLs, file paths, error messages, format strings."
 ```
 
-### Vulnerability Research
+### 2. Identify Key Functions
+
+Find entry points and important code paths by tracing imports and cross-references.
 
 ```
-1. "List all functions that take user input — recv, read, fgets, scanf"
-2. "Decompile each input handler and look for buffer overflows"
-3. "Check if there's bounds checking before memcpy/strcpy calls"
-4. "Trace the data flow from recv() through parsing to where it's used"
-5. "Look for format string vulnerabilities — printf with user-controlled format"
-6. "Check for integer overflow in size calculations before malloc"
-7. "Find any use-after-free patterns — free() followed by dereference"
+"List imported functions. Find all functions that reference network or file I/O APIs. Show the cross-references."
 ```
 
-### Firmware Analysis
+### 3. Decompile and Analyze
+
+Read the decompiled C pseudocode for functions of interest.
 
 ```
-1. "Identify the architecture and base address from the binary headers"
-2. "List all strings — look for default credentials, debug interfaces, API keys"
-3. "Find the main loop and trace command handling"
-4. "Look for update mechanisms — are firmware updates signed?"
-5. "Check for hardcoded crypto keys or certificates"
-6. "Map the UART/serial console handler if present"
+"Decompile the function at 0x401230. Explain what it does and trace its data flow."
 ```
 
-### CTF Reverse Engineering
+### 4. Map Behavior
+
+Build a picture of the binary's capabilities by following call chains.
 
 ```
-1. "Decompile main() — what does this binary expect as input?"
-2. "Find the flag check function — what's it comparing against?"
-3. "Trace the transformation applied to user input before comparison"
-4. "Extract the expected values and work backwards to find the flag"
-5. "Check for anti-tampering — does it detect debuggers or patching?"
+"Trace the call chain from the main entry point. Map what each major function does."
 ```
 
-### Patch Diffing
+### 5. Document
+
+Clean up the analysis with meaningful names and comments. Generate a report.
 
 ```
-1. "I have two versions of this binary — before and after the security patch"
-2. "Compare the function lists — which functions were added or modified?"
-3. "Decompile the changed functions in both versions side by side"
-4. "Identify what vulnerability the patch fixes based on the code changes"
+"Rename the discovered functions with meaningful names. Add comments at key addresses. Generate an analysis report."
 ```
 
-## MCP Tool Reference
+## Failures Overcome
 
-| Tool | Description | Example |
-|------|-------------|---------|
-| `ghidra_functions` | List all functions with addresses | Find entry points |
-| `ghidra_decompile` | Decompile function → C pseudocode | `decompile main` or `decompile 0x401000` |
-| `ghidra_disassemble` | Get assembly listing | Low-level analysis |
-| `ghidra_xrefs_to` | What calls/references this address | Trace callers |
-| `ghidra_xrefs_from` | What this function calls/references | Trace callees |
-| `ghidra_strings` | Extract all strings in binary | Find URLs, creds, keys |
-| `ghidra_imports` | List imported functions (DLL/SO) | Identify capabilities |
-| `ghidra_exports` | List exported symbols | Find API surface |
-| `ghidra_segments` | List memory segments (.text, .data, etc.) | Understand layout |
-| `ghidra_search_bytes` | Search for byte patterns | Find crypto constants |
-| `ghidra_data_types` | List defined structs/types | Understand data structures |
-| `ghidra_rename` | Rename function or variable | Clean up analysis |
-| `ghidra_comment` | Add comment at address | Document findings |
-| `ghidra_analyze` | Trigger auto-analysis | Initial analysis pass |
-| `ghidra_memory_read` | Read raw bytes at address | Extract embedded data |
+| Problem | Resolution |
+|---------|-----------|
+| GhidraMCP bridge can't connect on port 8080 | Must have a project open in CodeBrowser with GhidraMCPPlugin enabled |
+| Java not found | Install JDK 17+: brew install --cask temurin (macOS) or apt install openjdk-17-jdk (Linux) |
+| uv-managed Python rejects pip on macOS | Use `uv pip install --python /path/to/venv pkg` |
+| Decompiler returns empty output | Run auto-analysis first: Analysis → Auto Analyze |
+| Address not found errors | Use hex with 0x prefix. Check function list for valid addresses. |
 
-## Effective Agent Prompting Tips
+## Constraints
 
-**Be specific with addresses.** Instead of "decompile that function", say "decompile the function at 0x401230" or "decompile the function named `process_input`".
+- Ghidra must have an open project in CodeBrowser with GhidraMCPPlugin enabled
+- GhidraMCP is plain HTTP REST — do NOT use mcp-proxy or SSE transport
+- Java 17+ required — Ghidra won't start without it
+- Large binaries (50MB+) take minutes for auto-analysis
+- Use hex addresses with 0x prefix
 
-**Start broad, go deep.** Begin with `functions` and `strings` to orient, then drill into specific functions with `decompile` and `xrefs`.
+## Safety Notes
 
-**Name things as you go.** Use `rename` to give meaningful names to functions and variables. This makes subsequent decompilation output much more readable.
+Reverse engineering is legal in most jurisdictions for security research, interoperability, and education. However:
 
-**Cross-reference is your best friend.** `xrefs_to` answers "who calls this?" and `xrefs_from` answers "what does this call?". Together they map the call graph.
+- Respect software license agreements and local laws
+- Do not distribute proprietary decompiled code
+- Follow responsible disclosure for any vulnerabilities discovered
+- CTF challenges and open-source binaries are always safe targets
 
-**Run analysis first.** If decompilation looks wrong or incomplete, run `analyze` to trigger Ghidra's auto-analysis. Many features depend on analysis data.
+## Validation
 
-## Pitfalls
+```bash
+bash scripts/healthcheck.sh
+```
 
-1. **Ghidra must have an open project in CodeBrowser** — the MCP plugin only works when CodeBrowser is active with a loaded binary
-2. **GhidraMCP is plain HTTP REST** — do NOT use mcp-proxy or SSE transport
-3. **Java 17+ required** — Ghidra won't start without it
-4. **Run auto-analysis before decompiling** — the decompiler needs analysis data
-5. **macOS uv venvs have no pip** — use `uv pip install --python path pkg`
-6. **Plugin install requires Ghidra restart** — it won't appear until you restart
-7. **Large binaries take time** — auto-analysis on a 50MB+ binary can take minutes
-8. **Address format** — use hex with 0x prefix (e.g. `0x401000`), not decimal
+Expected: "Ghidra MCP healthy" (requires Ghidra open with a loaded project)
